@@ -8,7 +8,7 @@
     - that file lives on a named Docker volume called `HNG-nginx-logs` that both nginx and the daemon mount. 
     - The daemon mounts it read-only.
 
-## **Why this matters architecturally:** 
+## **Why this matters architecturally:**
 
   - The daemon is completely out of band
   - it cannot slow down or block a request in flight. 
@@ -22,12 +22,121 @@
 ### TODO::
 
 ---
+
 ## **Setup Instructions**
----
-### TODO::
 
 ---
-## Domains, Entities
+
+### A. **CI/CD via GitHub Actions (GHCR)**
+
+- Workflow (`.github/workflows/deploy.yml`) builds and pushes the Docker image to **GitHub Container Registry (GHCR)**.  
+- **Triggering:**  
+  - From GitHub web UI (Actions tab → “Run workflow”).  
+  - Or via CLI:  
+    ```bash
+    gh workflow run deploy.yml
+    ```
+- **Secrets required:**  
+  - `GHCR_TOKEN` — PAT with `read:packages` and `write:packages`.  
+  - `REGISTRY` — registry namespace (e.g., `ghcr.io/<username>`).  
+  - `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_SSH_KEY` — SSH credentials.  
+  - `DEPLOY_PATH` — target path on server.  
+  - `GCP_ENV_FILE` — environment variables for the service.  
+- **Authentication:** Github's `Personal Access Token` is required to log in to GHCR before pulling.
+- **Flexibility:** Works for GCP or any platform with SSH + Docker Compose.
+
+---
+
+### B. **Manual clone + build (cloud terminal)**
+
+- If you don’t run the workflow, no image will exist in GHCR.  
+- Alternative: clone the repo and build directly on your VM:  
+  ```bash
+  git clone https://github.com/<your-org>/<your-repo>.git
+  cd <your-repo>
+  docker compose up --build -d
+  ```
+- **Behavior:**  
+  - `--build` ensures the service image is built from the included `Dockerfile`.  
+  - Docker Compose automatically pulls referenced images (e.g., `kefaslungu/hng-nextcloud`) if missing.  
+- Same as running locally, but executed inside the cloud machine.
+
+---
+
+### 3. **Local Development**
+
+- You can run the detector stack on your own machine for testing.  
+- Steps:  
+  1. Clone the repo:  
+
+  ```bash
+     git clone https://github.com/<your-org>/<your-repo>.git
+     cd <your-repo>
+     ```
+
+  2. Start services:  
+
+  ```bash
+     docker compose up --build -d
+     ```
+
+- **Behavior:**  
+  - Builds the detector image locally.  
+  - Pulls dependent images automatically.  
+  - You can access the dashboard and logs on your local environment just like in production.  
+- Useful for debugging, experimenting with config values, or validating changes before pushing to CI/CD.
+
+---
+
+### Key difference
+
+- **Actions path:** centralized build → image pushed once, pulled anywhere (requires PAT).  
+- **Manual path:** local build on VM → no registry needed, slower if VM resources are limited.  
+- **Local dev:** same as manual build, but on your own machine for testing/debugging.
+
+
+---
+
+## **Accessing the Dashboard**
+
+---
+
+### A. **When deployed (cloud)**
+
+- The Nginx reverse proxy exposes the detector dashboard at your configured domain.  
+- **Endpoints:**  
+
+  ```bash
+  `https://ddos-watchdog.duckdns.org/ddos-dashboard/` → HTML dashboard UI.  
+  `https://ddos-watchdog.duckdns.org/metrics` → JSON metrics feed.
+  ```
+
+- Nginx handles SSL termination (Let’s Encrypt certificates) and proxies requests to the daemon running on port `8080`.  
+- Healthcheck endpoint:  
+
+```bash
+  `https://ddos-watchdog.duckdns.org/nginx-health` → returns `ok` if Nginx is healthy.
+```
+
+### 2. **When running locally**
+
+- If you run `docker compose up --build -d` on your machine, the daemon is exposed directly without Nginx SSL.  
+- **Endpoints:**  
+
+```bash
+`http://localhost:8080/` → HTML dashboard UI.  
+`http://localhost:8080/metrics` → JSON metrics feed.  
+```
+
+- Since Nginx isn’t fronting the service locally, you don’t need HTTPS or domain setup — just hit `localhost:8080`.
+
+
+---
+---
+
+## **Domains, Entities**
+
+---
 ---
 
 ## **Domain entity:** `LogMonitor` — `monitor.go`
