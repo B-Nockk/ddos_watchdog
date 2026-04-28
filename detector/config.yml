@@ -1,0 +1,38 @@
+log:
+    path: /var/log/nginx/hng-access.log
+
+window:
+    seconds: 60
+
+baseline:
+    window_minutes: 30
+    recalc_interval_secs: 60
+
+detector:
+    z_threshold: 3.0
+    rate_multiplier: 5.0
+    error_multiplier: 3.0
+
+    # IPs that are NEVER banned regardless of traffic.
+    # E.G GCP internal IP, health-check sources, monitoring probes, etc.
+    # ALLOWLIST can also be set in env.
+    allowlist:
+        # - "10.128.0.2"       # example: GCP internal VM IP
+        # - "35.235.240.0"     # example: GCP IAP range (add full CIDR handling if needed)
+        # - "127.0.0.1"        # loopback (nginx health checks come from here)
+
+blocker:
+    ipset_name: ddos_blocklist
+    # Escalating ban ladder. A permanent ban (nil) is appended automatically.
+    # Offense 1 → 10 min, Offense 2 → 30 min, Offense 3 → 2 h, Offense 4+ → permanent
+    duration_minutes: [10, 30, 120]
+
+unbanner:
+    check_interval_secs: 30
+
+notifier:
+    webhook_url: "" # leave empty to disable Slack; override with SLACK_WEBHOOK_URL env var
+    audit_log_path: /var/log/ddos-daemon/audit.log
+
+dashboard:
+    port: 8080
