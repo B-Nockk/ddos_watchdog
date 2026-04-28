@@ -1,6 +1,7 @@
 # DDOS WatchDog
 
 ## **The daemon sits beside an app's network path.**
+
   - Nginx receives all HTTP traffic and forwards it to the app's docker instance. 
   - The daemon's relationship with nginx is through a shared log volume: 
     - nginx writes every request as a structured JSON line to `/var/log/nginx/hng-access.log`
@@ -8,6 +9,7 @@
     - The daemon mounts it read-only.
 
 ## **Why this matters architecturally:** 
+
   - The daemon is completely out of band
   - it cannot slow down or block a request in flight. 
   - Detection and blocking happen asynchronously. 
@@ -52,7 +54,7 @@
   - per-IP. 
 - counts need to be time-aware 
   - a request from 90 seconds ago shouldn’t influence whether a current rate looks anomalous
- 
+
 **Properties:**
 
 - `windowSeconds` — how far back the window extends (60 seconds)
@@ -60,6 +62,42 @@
 - `ipWindows` — a map from IP address to its own linked list of timestamps
 - `ipErrorWindows` — a map from IP address to a linked list of timestamps for only 4xx/5xx responses
 - `mu` — a read-write mutex protecting all three data structures
+
+
+**How it works:**
+
+  *example flow:*
+  
+      > IP A makes 3 requests, IP B makes 2,
+      > global window has 5 entries, 
+      > after 60s the oldest are evicted
+
+- **Deque structure:**  
+  - Each window (`globalWindow`, `ipWindows[ip]`, `ipErrorWindows[ip]`) is a linked list acting like a deque.  
+  - New entries are always appended at the back.  
+  - Old entries are evicted from the front, so the list always represents the last *N seconds* of activity.
+
+- **Eviction logic:**  
+  - On every insert or snapshot, the `evict()` function walks from the front of the list.  
+  - It removes entries whose timestamp is older than `now - windowSeconds`.  
+  - Because the front is always the oldest, eviction is efficient (O(1) per removal).
+
+- **Global vs IP windows:**  
+  - `globalWindow` tracks *all requests* across the system.  
+  - `ipWindows[ip]` tracks requests from a single IP.  
+  - `ipErrorWindows[ip]` tracks only error responses (status ≥ 400) from that IP.  
+  - This separation lets you distinguish between **global anomalies** (system under load) and **per‑IP anomalies** (one client misbehaving).
+
+- **Snapshots:**  
+  - `GetSnapshot(ip)` evicts stale entries, then counts the length of each relevant list.  
+  - Returns a `WindowSnapshot` with current rates for that IP, global traffic, and error traffic.  
+  - Always reflects the *current moment* because eviction is applied before counting.
+
+- **Concurrency:**  
+  - A read‑write mutex (`mu`) protects all lists.  
+  - Writers (`Record`) take a full lock, readers (`GetSnapshot`, `ActiveIPs`) take a read lock.  
+  - Ensures thread‑safe updates even under high log volume.
+
 
 **Behaviour:**
 
