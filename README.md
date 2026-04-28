@@ -45,3 +45,30 @@
 - Calls every registered handler function with the parsed entry
 
 ---
+
+**Domain entity:** `SlidingWindow` — `sliding_window.go`
+- Every parsed LogEntry needs to be counted in two dimensions simultaneously: 
+  - globally (all traffic) &
+  - per-IP. 
+- counts need to be time-aware 
+  - a request from 90 seconds ago shouldn’t influence whether a current rate looks anomalous
+ 
+**Properties:**
+
+- `windowSeconds` — how far back the window extends (60 seconds)
+- `globalWindow` — a linked list of timestamps for all requests
+- `ipWindows` — a map from IP address to its own linked list of timestamps
+- `ipErrorWindows` — a map from IP address to a linked list of timestamps for only 4xx/5xx responses
+- `mu` — a read-write mutex protecting all three data structures
+
+**Behaviour:**
+
+- `Record(entry)` — called for every log line. Appends the request's timestamp to the global list and the IP's list. 
+  - If the status code is ≥ 400, also appends to that IP's error list. 
+  - After every append it **evicts** entries older than the window cutoff from the front of the list.
+
+- `GetSnapshot(ip)` — returns a `point-in-time` count of how many entries are in each relevant list right now.
+  - Also evicts stale entries before counting, so the count is always accurate to the current moment.
+
+- `ActiveIPs()` — returns the set of IPs that have at least one entry in `ipWindows`, regardless of whether those entries are stale. 
+  - evaluation loop uses this to know which IPs to check.
