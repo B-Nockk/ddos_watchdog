@@ -1,0 +1,54 @@
+name: Deploy to GCP
+on:
+    workflow_dispatch:
+
+jobs:
+    build-and-deploy:
+        runs-on: ubuntu-22.04
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v4
+
+            - name: Log in to GHCR
+              uses: docker/login-action@v3
+              with:
+                  registry: ghcr.io
+                  username: ${{ github.actor }}
+                  password: ${{ secrets.GHCR_TOKEN }}
+
+            - name: Build and push image
+              uses: docker/build-push-action@v5
+              with:
+                  context: ./detector
+                  push: true
+                  tags: ${{ secrets.REGISTRY }}/ddos-watchdog:latest
+
+            - name: Copy compose file to server
+              uses: appleboy/scp-action@v0.1.7
+              with:
+                  host: ${{ secrets.DEPLOY_HOST }}
+                  username: ${{ secrets.DEPLOY_USER }}
+                  key: ${{ secrets.DEPLOY_SSH_KEY }}
+                  source: "docker-compose.yml,nginx/nginx.conf,detector/config.yml"
+                  target: ${{ secrets.DEPLOY_PATH }}
+
+            - name: Deploy to GCP
+              uses: appleboy/ssh-action@v1.0.3
+              with:
+                  host: ${{ secrets.DEPLOY_HOST }}
+                  username: ${{ secrets.DEPLOY_USER }}
+                  key: ${{ secrets.DEPLOY_SSH_KEY }}
+                  script: |
+                      mkdir -p ${{ secrets.DEPLOY_PATH }} && cd ${{ secrets.DEPLOY_PATH }}
+
+                      cat > .env << 'ENVEOF'
+                      ${{ secrets.GCP_ENV_FILE }}
+                      ENVEOF
+
+                      echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u b-nockk --password-stdin
+
+                      docker pull ${{ secrets.REGISTRY }}/ddos-watchdog:latest
+                      docker compose -f docker-compose.yml up -d
+
+                      docker pull kefaslungu/hng-nextcloud
+                      docker compose -f docker-compose.yml up -d nextcloud
