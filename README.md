@@ -29,7 +29,8 @@
 ---
 ## Domains, Entities
 ---
-**Domain entity:** `LogMonitor` — `monitor.go`
+
+## **Domain entity:** `LogMonitor` — `monitor.go`
 
 **Properties:**
 
@@ -48,10 +49,11 @@
 
 ---
 
-**Domain entity:** `SlidingWindow` — `sliding_window.go`
+## **Domain entity:** `SlidingWindow` — `sliding_window.go`
+
 - Every parsed LogEntry needs to be counted in two dimensions simultaneously: 
   - globally (all traffic) &
-  - per-IP. 
+  - per-IP.
 - counts need to be time-aware 
   - a request from 90 seconds ago shouldn’t influence whether a current rate looks anomalous
 
@@ -110,3 +112,68 @@
 
 - `ActiveIPs()` — returns the set of IPs that have at least one entry in `ipWindows`, regardless of whether those entries are stale. 
   - evaluation loop uses this to know which IPs to check.
+
+
+---
+
+## **Domain entity:** `BaselineEngine` — `baseline.go`
+
+- Learns the volume boundary of normal traffic dynamically.  
+- Avoids hardcoded thresholds by continuously updating from observed traffic.  
+- Adjusts for time‑of‑day differences and long‑term patterns.
+
+---
+
+**Properties:**
+
+- `windowMinutes` — rolling sample window size (30 minutes).  
+- `reCalcInterval` — how often to recompute baseline (every 60 seconds).  
+- `perSecondCounts` — linked list of tick entries, each holding timestamp + request count for one second.  
+- `hourlySlots` — map from hour‑of‑day (0–23) to historical mean values, building a time‑of‑day profile.  
+- `effectiveMean` / `effectiveStddev` — currently active baseline values used by detector.  
+- `startedAt` — creation time, used to enforce warmup grace period (2 minutes).  
+- `mu` — mutex protecting all structures.  
+
+---
+
+**How it works:**
+
+*example flow:*
+
+  ```txt
+    > At 12:00:01, 120 requests observed → tickEntry added
+    > At 12:00:02, 80 requests observed → tickEntry added
+    > After 30 minutes, oldest ticks evicted
+    > Every 60s, baseline recalculated from recent samples
+    > If enough hourly data exists (≥120 samples for that hour), use that instead
+  ```
+
+- **Deque structure:**  
+  - `perSecondCounts` is a linked list acting like a deque.  
+  - New ticks are appended at the back.  
+  - Old ticks beyond `windowMinutes` are evicted from the front.  
+
+- **Recalculation intervals:**  
+  - Every `reCalcInterval` seconds, `maybeReCalc` triggers `recalculate`.  
+  - Chooses sample set: hourly slot if mature enough, otherwise rolling window.  
+  - Updates `effectiveMean` and `effectiveStddev`.  
+
+- **Floor values:**  
+  - Mean never below 1.0, stddev never below 0.5.  
+  - Prevents division‑by‑zero and avoids hypersensitivity during quiet periods.  
+
+- **Warmup period:**  
+  - First 2 minutes marked as not ready (`Ready=false`).  
+  - Ensures baseline stabilizes before anomaly detection starts.  
+
+---
+
+**Behaviour:**
+
+- `RecordTick(count, ts)` — called once per second. Appends tick, evicts old ticks, maybe recalculates.  
+- `maybeReCalc(now)` — checks interval, triggers recalculation if due.  
+- `recalculate(now)` — computes mean/stddev from chosen sample set, applies floor values, updates hourly slots.  
+- `GetBaseline()` — returns snapshot of current baseline values, including whether hourly slots were used and whether warmup is complete.  
+- `SetNotifier(n)` — attaches notifier for audit logging of recalculations.  
+
+---
