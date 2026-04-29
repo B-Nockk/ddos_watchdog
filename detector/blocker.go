@@ -20,6 +20,7 @@ type Blocker struct {
 	banned    map[string]*BanRecord
 	durations []*int
 	ipsetName string
+	store     *OffenseStore
 	mu        sync.RWMutex
 }
 
@@ -67,7 +68,7 @@ func (b *Blocker) Release(ip string) {
 	}
 
 	delete(b.banned, ip)
-	log.Printf("[blocker] released %s", ip)
+	log.Printf("[blocker] released %s (offense history preserved in store)", ip)
 }
 
 func (b *Blocker) run(name string, args ...string) error {
@@ -107,17 +108,19 @@ func (b *Blocker) setupIPSet() {
 	}
 }
 
-func NewBlocker(IpsetName string, durationMinutes []int) *Blocker {
+func NewBlocker(ipsetName string, durationMinutes []int, store *OffenseStore) *Blocker {
 	ladder := make([]*int, len(durationMinutes)+1)
 	for i, d := range durationMinutes {
 		v := d
 		ladder[i] = &v
 	}
 	ladder[len(durationMinutes)] = nil
+
 	b := &Blocker{
 		banned:    make(map[string]*BanRecord),
 		durations: ladder,
-		ipsetName: IpsetName,
+		ipsetName: ipsetName,
+		store:     store,
 	}
 
 	b.setupIPSet()
@@ -135,10 +138,7 @@ func (b *Blocker) Ban(ip string) *BanRecord {
 		return existing
 	}
 
-	offenseCount := 0
-	if alreadyBanned {
-		offenseCount = existing.OffenseCount
-	}
+	offenseCount := b.store.OffenseCount(ip)
 
 	ladderIdx := offenseCount
 	if ladderIdx >= len(b.durations) {
@@ -157,6 +157,8 @@ func (b *Blocker) Ban(ip string) *BanRecord {
 	}
 
 	b.banned[ip] = record
+
+	b.store.RecordOffense(ip, record.OffenseCount)
 
 	if err := b.run("ipset", "add", b.ipsetName, ip, "--exist"); err != nil {
 		log.Printf("[blocker] ipset add %s: %v", ip, err)

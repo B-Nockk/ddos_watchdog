@@ -31,16 +31,17 @@ type Config struct {
 	} `yaml:"baseline"`
 
 	Detector struct {
-		ZThreshold      float64 `yaml:"z_threshold"`
-		RateMultiplier  float64 `yaml:"rate_multiplier"`
-		ErrorMultiplier float64 `yaml:"error_multiplier"`
-
-		Allowlist []string `yaml:"allowlist"`
+		ZThreshold      float64  `yaml:"z_threshold"`
+		RateMultiplier  float64  `yaml:"rate_multiplier"`
+		ErrorMultiplier float64  `yaml:"error_multiplier"`
+		Allowlist       []string `yaml:"allowlist"`
 	} `yaml:"detector"`
 
 	Blocker struct {
-		IPSetName       string `yaml:"ipset_name"`
-		DurationMinutes []int  `yaml:"duration_minutes"`
+		IPSetName          string `yaml:"ipset_name"`
+		DurationMinutes    []int  `yaml:"duration_minutes"`
+		OffenseMemoryHours int    `yaml:"offense_memory_hours"`
+		DBPath             string `yaml:"db_path"`
 	} `yaml:"blocker"`
 
 	Unbanner struct {
@@ -69,6 +70,9 @@ func (cfg *Config) validate() error {
 	}
 	if cfg.Blocker.IPSetName == "" {
 		return fmt.Errorf("blocker.ipset_name is required")
+	}
+	if cfg.Blocker.DBPath == "" {
+		return fmt.Errorf("blocker.db_path is required")
 	}
 	return nil
 }
@@ -99,13 +103,19 @@ func loadConfig(path string) (*Config, error) {
 			cfg.Dashboard.Port = port
 		}
 	}
-
 	if extra := os.Getenv("ALLOWLIST"); extra != "" {
 		for _, e := range strings.Split(extra, ",") {
 			if trimmed := strings.TrimSpace(e); trimmed != "" {
 				cfg.Detector.Allowlist = append(cfg.Detector.Allowlist, trimmed)
 			}
 		}
+	}
+	if dbPath := os.Getenv("DB_PATH"); dbPath != "" {
+		cfg.Blocker.DBPath = dbPath
+	}
+
+	if cfg.Blocker.OffenseMemoryHours == 0 {
+		cfg.Blocker.OffenseMemoryHours = 2
 	}
 
 	return &cfg, nil
@@ -129,9 +139,15 @@ func main() {
 		log.Fatalf("[main] monitor init failed: %v", err)
 	}
 
+	store, err := NewOffenseStore(cfg.Blocker.DBPath, cfg.Blocker.OffenseMemoryHours)
+	if err != nil {
+		log.Fatalf("[main] offense store init failed: %v", err)
+	}
+	defer store.Close()
+
 	window := NewSlidingWindow(cfg.Window.Seconds)
 	baseline := NewBaselineEngine(cfg.Baseline.WindowMinutes, cfg.Baseline.RecalcIntervalSecs)
-	blocker := NewBlocker(cfg.Blocker.IPSetName, cfg.Blocker.DurationMinutes)
+	blocker := NewBlocker(cfg.Blocker.IPSetName, cfg.Blocker.DurationMinutes, store)
 	notifier := NewNotifier(cfg.Notifier.WebhookURL, cfg.Notifier.AuditLogPath)
 
 	baseline.SetNotifier(notifier)
@@ -143,14 +159,12 @@ func main() {
 	log.Printf("[main] allowlist: %v", cfg.Detector.Allowlist)
 
 	detector := NewAnomalyDetector(cfg.Detector.ZThreshold, cfg.Detector.RateMultiplier, cfg.Detector.ErrorMultiplier, blocker)
-
 	unbanner := NewUnbanner(blocker, notifier, cfg.Unbanner.CheckIntervalSecs)
-	dash := NewDashboard(blocker, window, baseline, cfg.Dashboard.Port)
+	dash := NewDashboard(blocker, window, baseline, store, cfg.Dashboard.Port)
 
 	var entryCount atomic.Int64
 
 	monitor.OnEntry(func(le LogEntry) {
-
 		if _, ok := allowlist[le.SourceIP]; ok {
 			return
 		}
@@ -186,7 +200,6 @@ func main() {
 				baseline.RecordTick(count, ts)
 
 				base := baseline.GetBaseline()
-
 				if !base.Ready {
 					log.Printf("[main] baseline warming up (%d samples)...", base.SampleCount)
 					continue
@@ -195,7 +208,6 @@ func main() {
 				activeIPs := window.ActiveIPs()
 
 				for _, ip := range activeIPs {
-
 					if _, ok := allowlist[ip]; ok {
 						continue
 					}
