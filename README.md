@@ -19,7 +19,20 @@
 ---
 ## **Language Choice & WHy**
 ---
-### TODO::
+
+### **Language:**
+
+- **GO**
+
+### **Why Go?**
+
+- **Strong typing:** Go enforces type safety at compile time, reducing runtime errors and making large systems more reliable.  
+- **Concurrency model:** Goroutines and channels provide lightweight, efficient concurrency — simpler and more predictable than Python’s threads or async/await.  
+- **Performance:** Compiles to native machine code, giving near‑C speed while retaining simplicity. This makes it well‑suited for high‑volume log processing and anomaly detection.  
+- **Cloud & DevOps alignment:** Go is widely used in cloud infrastructure.  
+- **Deployment simplicity:** Produces static binaries with minimal dependencies, making containerization and deployment straightforward compared to languages that require heavier runtimes.  
+- **Memory efficiency:** Goroutines consume far less memory than OS threads, allowing thousands of concurrent tasks without exhausting resources.  
+
 
 ---
 
